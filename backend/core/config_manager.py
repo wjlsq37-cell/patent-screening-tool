@@ -46,6 +46,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "filename_prefix": "PatentHub_AI分析",
         "timezone": "Asia/Shanghai",
     },
+    "patenthub": {
+        "base_url": "https://www.patenthub.cn",
+        "username": "",
+        "password": "",
+    },
+    "automation": {
+        "default_download_limit": 100,
+        "max_download_limit": 500,
+        "browser_channel": "msedge",
+        "headless": False,
+    },
 }
 
 
@@ -120,6 +131,42 @@ def update_ai_settings(payload: dict[str, Any]) -> dict[str, Any]:
     return public_ai_settings()
 
 
+def public_patenthub_settings() -> dict[str, Any]:
+    config = load_config()
+    patenthub = config.get("patenthub", {})
+    automation = config.get("automation", {})
+    return {
+        "base_url": patenthub.get("base_url", "https://www.patenthub.cn"),
+        "username": patenthub.get("username", ""),
+        "has_password": bool(patenthub.get("password")),
+        "default_download_limit": int(automation.get("default_download_limit", 100) or 100),
+        "max_download_limit": int(automation.get("max_download_limit", 500) or 500),
+        "browser_channel": automation.get("browser_channel", "msedge"),
+    }
+
+
+def update_patenthub_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    patenthub = config.setdefault("patenthub", {})
+    automation = config.setdefault("automation", {})
+
+    if "base_url" in payload and payload["base_url"]:
+        patenthub["base_url"] = str(payload["base_url"]).strip().rstrip("/")
+    if "username" in payload:
+        patenthub["username"] = str(payload.get("username") or "").strip()
+    if payload.get("password"):
+        patenthub["password"] = str(payload["password"])
+
+    if "default_download_limit" in payload and payload["default_download_limit"] is not None:
+        max_limit = int(automation.get("max_download_limit", 500) or 500)
+        automation["default_download_limit"] = max(1, min(int(payload["default_download_limit"]), max_limit))
+
+    config["patenthub"] = patenthub
+    config["automation"] = automation
+    save_config(config)
+    return public_patenthub_settings()
+
+
 def load_prompts() -> dict[str, str]:
     return read_yaml(CONFIG_DIR / "prompts.yaml", {})
 
@@ -165,4 +212,3 @@ def upload_meta_path(file_id: str) -> Path:
 
 def output_path(filename: str) -> Path:
     return OUTPUT_DIR / filename
-

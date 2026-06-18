@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.api.analyze_api import router as analyze_router
 from backend.api.keyword_api import router as keyword_router
+from backend.api.patenthub_api import router as patenthub_router
 from backend.api.settings_api import router as settings_router
 from backend.api.upload_api import router as upload_router
 from backend.core.config_manager import ensure_data_dirs
@@ -31,6 +32,7 @@ app.include_router(settings_router)
 app.include_router(keyword_router)
 app.include_router(upload_router)
 app.include_router(analyze_router)
+app.include_router(patenthub_router)
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
@@ -42,4 +44,3 @@ def index() -> FileResponse:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
-

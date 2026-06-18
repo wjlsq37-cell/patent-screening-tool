@@ -22,6 +22,9 @@ const state = {
   fieldMapping: {},
   previewExpanded: false,
   progressTimer: null,
+  automationTaskId: null,
+  automationTimer: null,
+  patenthubSettings: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -114,6 +117,44 @@ async function loadSettings() {
   }
 }
 
+async function loadPatentHubSettings() {
+  try {
+    const data = await apiFetch('/api/patenthub/settings');
+    const settings = data.patenthub;
+    state.patenthubSettings = settings;
+    $('patenthubUsernameInput').value = settings.username || '';
+    $('patenthubPasswordInput').placeholder = settings.has_password ? '已保存密码，留空则不修改' : '请输入 PatentHub 密码';
+    $('downloadLimitInput').value = settings.default_download_limit || 100;
+    $('patenthubAccountStatus').textContent = settings.username
+      ? `${settings.username}，${settings.has_password ? '已保存密码' : '未保存密码'}`
+      : '未保存账号';
+  } catch (error) {
+    setStatus('automationStatus', error.message, 'error');
+  }
+}
+
+async function savePatentHubSettings() {
+  setStatus('automationStatus', '正在保存 PatentHub 账号...');
+  try {
+    const payload = {
+      base_url: 'https://www.patenthub.cn',
+      username: $('patenthubUsernameInput').value.trim(),
+      password: $('patenthubPasswordInput').value.trim() || null,
+      default_download_limit: Number($('downloadLimitInput').value || 100),
+    };
+    await apiFetch('/api/patenthub/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    $('patenthubPasswordInput').value = '';
+    await loadPatentHubSettings();
+    setStatus('automationStatus', 'PatentHub 账号已保存到本机配置。', 'success');
+  } catch (error) {
+    setStatus('automationStatus', error.message, 'error');
+  }
+}
+
 async function saveSettings() {
   setStatus('settingsStatus', '正在保存设置...');
   try {
@@ -166,6 +207,9 @@ async function extractKeywords() {
     });
     state.keywordResult = data.result;
     renderKeywordResult(state.keywordResult);
+    if (!$('autoSearchQueryInput').value.trim()) {
+      $('autoSearchQueryInput').value = suggestedSearchQuery();
+    }
     setStatus('keywordStatus', '关键词已生成，可复制到 PatentHub 检索。', 'success');
   } catch (error) {
     setStatus('keywordStatus', error.message, 'error');
@@ -294,6 +338,33 @@ function collectMapping() {
   return mapping;
 }
 
+function collectImportantApplicants() {
+  return $('importantApplicantsInput').value
+    .split(/\n|,|，|;|；/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function suggestedSearchQuery() {
+  const keywordResult = state.keywordResult || {};
+  const formulas = keywordResult['推荐检索式'] || [];
+  if (Array.isArray(formulas) && formulas.length) return formulas[0];
+  if (typeof formulas === 'string' && formulas.trim()) return formulas.trim();
+  const core = keywordResult['核心关键词'] || [];
+  if (Array.isArray(core) && core.length) return core.join(' ');
+  return $('requirementInput').value.trim();
+}
+
+function fillSearchQuery() {
+  const query = suggestedSearchQuery();
+  if (!query) {
+    setStatus('automationStatus', '请先填写需求或生成关键词。', 'error');
+    return;
+  }
+  $('autoSearchQueryInput').value = query;
+  setStatus('automationStatus', '已填入推荐检索式。', 'success');
+}
+
 function startProgress() {
   clearInterval(state.progressTimer);
   const bar = $('progressBar');
@@ -322,10 +393,7 @@ async function analyze() {
     return;
   }
 
-  const applicants = $('importantApplicantsInput').value
-    .split(/\n|,|，|;|；/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const applicants = collectImportantApplicants();
 
   $('analyzeBtn').disabled = true;
   $('downloadArea').classList.add('hidden');
@@ -360,6 +428,126 @@ async function analyze() {
     setStatus('analysisStatus', error.message, 'error');
   } finally {
     $('analyzeBtn').disabled = false;
+  }
+}
+
+function setAutomationBusy(isBusy) {
+  $('startAutomationBtn').disabled = isBusy;
+  $('savePatentHubBtn').disabled = isBusy;
+  $('cancelAutomationBtn').classList.toggle('hidden', !isBusy);
+}
+
+function setAutomationProgress(progress) {
+  $('automationProgressBar').style.width = `${Math.max(0, Math.min(Number(progress || 0), 100))}%`;
+}
+
+async function startAutomation() {
+  const requirement = $('requirementInput').value.trim();
+  if (!requirement) {
+    setStatus('automationStatus', '请先在需求拆解页填写专利检索需求。', 'error');
+    activateTab('keywords');
+    return;
+  }
+  const query = $('autoSearchQueryInput').value.trim() || suggestedSearchQuery();
+  if (!query) {
+    setStatus('automationStatus', '请先填写检索式或关键词。', 'error');
+    return;
+  }
+  $('autoSearchQueryInput').value = query;
+  setAutomationBusy(true);
+  $('continueAutomationBtn').classList.add('hidden');
+  $('downloadArea').classList.add('hidden');
+  $('topRecordsSection').classList.add('hidden');
+  setAutomationProgress(5);
+  setStatus('automationStatus', '正在创建自动检索任务...');
+  try {
+    const payload = {
+      requirement,
+      keyword_analysis: state.keywordResult || {},
+      search_query: query,
+      download_limit: Number($('downloadLimitInput').value || 100),
+      max_ai_summary: Number($('maxSummaryInput').value || 0),
+      important_applicants: collectImportantApplicants(),
+    };
+    const data = await apiFetch('/api/patenthub/automation/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    state.automationTaskId = data.task_id;
+    handleAutomationStatus(data);
+    state.automationTimer = setInterval(pollAutomationStatus, 1800);
+  } catch (error) {
+    setAutomationBusy(false);
+    setAutomationProgress(0);
+    setStatus('automationStatus', error.message, 'error');
+  }
+}
+
+async function pollAutomationStatus() {
+  if (!state.automationTaskId) return;
+  try {
+    const data = await apiFetch(`/api/patenthub/automation/${state.automationTaskId}/status`);
+    handleAutomationStatus(data);
+  } catch (error) {
+    stopAutomationPolling();
+    setAutomationBusy(false);
+    setStatus('automationStatus', error.message, 'error');
+  }
+}
+
+function stopAutomationPolling() {
+  clearInterval(state.automationTimer);
+  state.automationTimer = null;
+}
+
+function handleAutomationStatus(data) {
+  setAutomationProgress(data.progress || 0);
+  const type = data.status === 'failed' ? 'error' : data.status === 'completed' ? 'success' : '';
+  setStatus('automationStatus', data.message || '', type);
+  $('continueAutomationBtn').classList.toggle('hidden', !data.waiting_for_user);
+  $('cancelAutomationBtn').classList.toggle('hidden', !['created', 'running', 'downloading', 'analyzing', 'waiting_user_verification'].includes(data.status));
+
+  if (data.preview && (!state.upload || state.upload.file_id !== data.preview.file_id)) {
+    applyPreview(data.preview);
+  }
+  if (data.status === 'completed') {
+    stopAutomationPolling();
+    setAutomationBusy(false);
+    if (data.result) {
+      $('downloadArea').classList.remove('hidden');
+      $('downloadLink').href = data.result.download_url;
+      $('downloadLink').textContent = `下载 ${data.result.output_filename}`;
+      renderTopRecords(data.result.top_records || []);
+      loadHistory();
+    }
+  }
+  if (data.status === 'failed' || data.status === 'cancelled') {
+    stopAutomationPolling();
+    setAutomationBusy(false);
+    if (data.status === 'failed') {
+      setStatus('automationStatus', data.error || data.message || '自动检索失败。', 'error');
+    }
+  }
+}
+
+async function continueAutomation() {
+  if (!state.automationTaskId) return;
+  try {
+    const data = await apiFetch(`/api/patenthub/automation/${state.automationTaskId}/continue`, { method: 'POST' });
+    handleAutomationStatus(data);
+  } catch (error) {
+    setStatus('automationStatus', error.message, 'error');
+  }
+}
+
+async function cancelAutomation() {
+  if (!state.automationTaskId) return;
+  try {
+    const data = await apiFetch(`/api/patenthub/automation/${state.automationTaskId}/cancel`, { method: 'POST' });
+    handleAutomationStatus(data);
+  } catch (error) {
+    setStatus('automationStatus', error.message, 'error');
   }
 }
 
@@ -429,6 +617,11 @@ function wireEvents() {
   });
   $('saveSettingsBtn').addEventListener('click', saveSettings);
   $('testSettingsBtn').addEventListener('click', testSettings);
+  $('savePatentHubBtn').addEventListener('click', savePatentHubSettings);
+  $('fillSearchQueryBtn').addEventListener('click', fillSearchQuery);
+  $('startAutomationBtn').addEventListener('click', startAutomation);
+  $('continueAutomationBtn').addEventListener('click', continueAutomation);
+  $('cancelAutomationBtn').addEventListener('click', cancelAutomation);
   $('extractKeywordsBtn').addEventListener('click', extractKeywords);
   $('copyKeywordsBtn').addEventListener('click', copyKeywords);
   $('uploadBtn').addEventListener('click', uploadFile);
@@ -445,5 +638,6 @@ function wireEvents() {
 document.addEventListener('DOMContentLoaded', async () => {
   wireEvents();
   await loadSettings();
+  await loadPatentHubSettings();
   await loadHistory();
 });

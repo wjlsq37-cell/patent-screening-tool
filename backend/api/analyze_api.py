@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -8,13 +7,9 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from backend.api.upload_api import get_upload_file_path
-from backend.core.config_manager import add_history, delete_history, load_config, load_history, output_path
-from backend.core.excel_exporter import export_analysis
-from backend.core.excel_reader import read_sheet, standardize_records
-from backend.core.field_mapper import STANDARD_FIELDS, auto_map_fields, validate_mapping
-from backend.core.patent_ranker import rank_patents
-from backend.core.patent_summarizer import summarize_records
+from backend.core.analysis_pipeline import analyze_xlsx_file
+from backend.core.config_manager import add_history, delete_history, load_history, output_path
+from backend.core.upload_store import get_upload_file_path
 
 
 router = APIRouter(prefix="/api", tags=["analysis"])
@@ -30,54 +25,28 @@ class AnalyzeRequest(BaseModel):
     important_applicants: list[str] = []
 
 
-def _mapping_warnings(mapping: dict[str, str]) -> list[str]:
-    warnings = []
-    recommended = ["专利名称", "申请号", "公开号", "申请人", "摘要", "法律状态"]
-    missing = [field for field in recommended if not mapping.get(field)]
-    if missing:
-        warnings.append(f"以下推荐字段未映射：{'、'.join(missing)}。结果仍会生成，但建议人工复核。")
-    return warnings
-
-
 @router.post("/analyze")
 async def analyze(payload: AnalyzeRequest) -> dict[str, Any]:
     if not payload.requirement.strip():
         raise HTTPException(status_code=400, detail="请先填写专利检索需求。")
 
-    file_path = get_upload_file_path(payload.file_id)
     try:
-        df = read_sheet(file_path, payload.sheet_name)
-        columns = [str(col) for col in df.columns]
-        mapping = validate_mapping(payload.field_mapping or auto_map_fields(columns), columns)
-        records = standardize_records(df, mapping)
-        if not records:
-            raise ValueError("未读取到专利记录。")
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"读取上传文件失败：{exc}") from exc
+        file_path = get_upload_file_path(payload.file_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    config = load_config()
-    warnings = _mapping_warnings(mapping)
     try:
-        ranked = rank_patents(
-            records,
+        result = await analyze_xlsx_file(
+            file_path,
+            payload.sheet_name,
             payload.requirement,
             payload.keyword_analysis or {},
-            config,
+            payload.field_mapping,
+            payload.max_ai_summary,
             payload.important_applicants,
         )
-        summarized, summary_warnings = await summarize_records(
-            ranked,
-            payload.requirement,
-            payload.keyword_analysis or {},
-            payload.max_ai_summary,
-        )
-        warnings.extend(summary_warnings)
-        output_file, output_filename = export_analysis(
-            summarized,
-            payload.requirement,
-            payload.keyword_analysis or {},
-            warnings,
-        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"读取上传文件失败：{exc}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"分析或导出失败：{exc}") from exc
 
@@ -86,19 +55,19 @@ async def analyze(payload: AnalyzeRequest) -> dict[str, Any]:
         {
             "task_id": task_id,
             "input_filename": file_path.name,
-            "output_filename": output_filename,
-            "row_count": len(ranked),
+            "output_filename": result["output_filename"],
+            "row_count": result["row_count"],
             "requirement": payload.requirement,
-            "warnings": warnings,
+            "warnings": result["warnings"],
         }
     )
     return {
         "task_id": task_id,
-        "row_count": len(ranked),
+        "row_count": result["row_count"],
         "download_url": f"/api/history/{task_id}/download",
-        "output_filename": output_filename,
-        "warnings": warnings,
-        "top_records": summarized[:10],
+        "output_filename": result["output_filename"],
+        "warnings": result["warnings"],
+        "top_records": result["top_records"],
     }
 
 
@@ -128,4 +97,3 @@ def remove_history(task_id: str) -> dict[str, Any]:
         path.unlink()
     deleted = delete_history(task_id)
     return {"ok": deleted}
-

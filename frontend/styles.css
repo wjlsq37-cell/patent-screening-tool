@@ -157,6 +157,11 @@ body {
   white-space: nowrap;
 }
 
+.compact-button {
+  min-height: 30px;
+  padding: 5px 10px;
+}
+
 .primary-button {
   background: #0e7490;
   color: #fff;

@@ -67,24 +67,31 @@ def should_exclude(path: Path) -> bool:
     return any(fnmatch.fnmatch(relative, pattern) for pattern in EXCLUDE_PATTERNS)
 
 
-def read_local_api_key() -> str:
+def read_local_secrets() -> list[str]:
     config_path = PROJECT_DIR / "backend" / "config" / "config.yaml"
     if not config_path.exists():
-        return ""
+        return []
     data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    return str((data.get("ai") or {}).get("api_key") or "")
+    ai = data.get("ai") or {}
+    patenthub = data.get("patenthub") or {}
+    return [
+        str(ai.get("api_key") or ""),
+        str(patenthub.get("username") or ""),
+        str(patenthub.get("password") or ""),
+    ]
 
 
-def assert_no_key_leak(zip_path: Path, api_key: str) -> None:
-    if len(api_key) < 8:
+def assert_no_secret_leak(zip_path: Path, secrets: list[str]) -> None:
+    secret_bytes = [secret.encode("utf-8") for secret in secrets if len(secret) >= 8]
+    if not secret_bytes:
         return
-    key_bytes = api_key.encode("utf-8")
     with zipfile.ZipFile(zip_path) as zf:
         for item in zf.infolist():
             if item.file_size > 10_000_000:
                 continue
-            if key_bytes in zf.read(item.filename):
-                raise RuntimeError(f"打包结果包含本地 API Key：{item.filename}")
+            content = zf.read(item.filename)
+            if any(secret in content for secret in secret_bytes):
+                raise RuntimeError(f"打包结果包含本地敏感配置：{item.filename}")
 
 
 def read_url_text(url: str) -> str:
@@ -219,17 +226,17 @@ def prepare_portable_python(target_dir: Path) -> Path:
     return python_dir / "python.exe"
 
 
-def build_source_package(timestamp: str, api_key: str) -> Path:
+def build_source_package(timestamp: str, secrets: list[str]) -> Path:
     DIST_DIR.mkdir(exist_ok=True)
     zip_path = DIST_DIR / f"PatentHub_AI_Assistant_source_{timestamp}.zip"
     root_dir = BUILD_DIR / PROJECT_DIR.name
     copy_clean_source(root_dir)
     zip_directory(root_dir, zip_path)
-    assert_no_key_leak(zip_path, api_key)
+    assert_no_secret_leak(zip_path, secrets)
     return zip_path
 
 
-def build_portable_package(timestamp: str, api_key: str) -> Path:
+def build_portable_package(timestamp: str, secrets: list[str]) -> Path:
     DIST_DIR.mkdir(exist_ok=True)
     root_dir = BUILD_DIR / f"{PROJECT_DIR.name}-portable"
     copy_clean_source(root_dir)
@@ -238,13 +245,19 @@ def build_portable_package(timestamp: str, api_key: str) -> Path:
     zip_path = DIST_DIR / f"PatentHub_AI_Assistant_portable_win_amd64_py{runtime_version.replace('.', '')}_{timestamp}.zip"
 
     subprocess.run(
-        [str(python_exe), "-c", "import fastapi, uvicorn, pandas, openpyxl, yaml, httpx; print('portable ok')"],
+        [
+            str(python_exe),
+            "-c",
+            "import fastapi, uvicorn, pandas, openpyxl, yaml, httpx; "
+            "from playwright.async_api import async_playwright; "
+            "print('portable ok')",
+        ],
         cwd=root_dir,
         check=True,
     )
 
     zip_directory(root_dir, zip_path)
-    assert_no_key_leak(zip_path, api_key)
+    assert_no_secret_leak(zip_path, secrets)
     return zip_path
 
 
@@ -261,15 +274,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    api_key = read_local_api_key()
+    secrets = read_local_secrets()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     packages: list[Path] = []
     if args.mode in {"source", "all"}:
-        packages.append(build_source_package(timestamp, api_key))
+        packages.append(build_source_package(timestamp, secrets))
     if args.mode in {"portable", "all"}:
-        packages.append(build_portable_package(timestamp, api_key))
+        packages.append(build_portable_package(timestamp, secrets))
 
     print("打包完成：")
     for package in packages:

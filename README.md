@@ -8,11 +8,12 @@
 - AI 设置保存和连接测试，支持 OpenAI-compatible API
 - 专利需求拆解：核心关键词、扩展关键词、同义词、排除词、推荐检索式、推荐字段、注意事项
 - PatentHub xlsx 上传、sheet 读取、前 10 行预览、自动字段映射和手动修正
+- PatentHub 自动检索下载：本机保存账号密码，使用系统 Edge 登录、搜索并下载 xlsx
 - 根据相关度、法律状态、申请人、时间、数据完整度评分排序
 - 对前 N 篇专利调用 AI 总结；未配置 API Key 时使用本地摘要占位，分析流程不会中断
 - 按法律状态和重点申请人拆分输出 Excel sheet
 - 本地历史记录，支持重新下载和删除
-- 预留 PatentHub 自动登录、自动检索和自动下载模块接口
+- 自动化遇到验证码、滑块或二次验证时暂停，等待用户手动完成后继续
 
 ## 安装方法
 
@@ -80,14 +81,24 @@ http://127.0.0.1:8000
 
 后端默认按 `/v1/chat/completions` 调用。如果 Base URL 已经以 `/v1` 结尾，会自动拼接 `/chat/completions`。
 
-## 如何从 PatentHub 导出 xlsx
+## 如何从 PatentHub 自动检索下载
+
+1. 在“需求拆解”中生成关键词和推荐检索式。
+2. 进入“上传分析”页顶部的“自动检索下载”面板。
+3. 保存 PatentHub 账号和密码。账号密码只保存在本机 `backend/config/config.yaml`。
+4. 填写或自动填入检索式，设置“本次最多下载”，默认 100，最大 500。
+5. 点击“开始自动检索”。
+6. 系统会打开 Microsoft Edge。若出现验证码、滑块或二次验证，请在 Edge 中手动完成，再回到本页面点击“我已完成验证，继续”。
+7. xlsx 下载完成后，系统会自动进入现有评分、AI 总结和 Excel 导出流程。
+
+自动化只使用正常网页登录和网站导出功能，不绕过验证码、不破解登录、不绕过网站权限。如果页面结构变化导致系统无法安全限制下载数量，会停止自动下载并提示改用手动上传。
+
+## 如何从 PatentHub 手动导出 xlsx
 
 1. 在“需求拆解”中生成关键词和检索式。
 2. 将推荐检索式复制到 PatentHub 检索。
 3. 在 PatentHub 结果页导出 xlsx。
 4. 回到本工具的“上传分析”页上传该 xlsx。
-
-第一版不实现自动登录、自动检索或自动下载。
 
 ## 如何上传分析
 
@@ -177,16 +188,16 @@ backend/config/prompts.yaml
 
 目前包含需求拆解、相关度判断、单篇专利总结、批量总结和错误修复提示词。
 
-## 后续自动登录模块说明
+## PatentHub 自动化模块说明
 
-第一版只保留接口占位：
+自动化核心文件：
 
 ```text
 backend/core/patenthub_automation.py
 backend/core/patenthub_downloader.py
 ```
 
-后续可使用 Playwright 做安全自动化：打开浏览器、用户自行处理验证码、自动输入关键词、下载 xlsx 并进入现有分析流程。实现时应遵守网站权限，不绕过验证码，不破解登录，不高频请求。
+当前版本已实现基础 Playwright 自动化，默认使用系统 Microsoft Edge，不在便携包中内置 Chromium。如果目标电脑没有 Edge，请安装/启用 Edge，或改用手动上传流程。
 
 ## 本地数据位置
 
@@ -234,6 +245,8 @@ PatentHub_AI_Assistant_portable_win_amd64_py运行时版本_YYYYMMDD_HHMMSS.zip
 - 已安装好的后端依赖
 - 项目代码和前端页面
 - 一键启动脚本 `start_windows.bat`
+
+便携包不内置 Chromium；自动检索功能默认调用目标电脑上的 Microsoft Edge。
 
 别人拿到便携包后：
 

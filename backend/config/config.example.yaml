@@ -37,3 +37,13 @@ export:
   filename_prefix: PatentHub_AI分析
   timezone: Asia/Shanghai
 
+patenthub:
+  base_url: https://www.patenthub.cn
+  username: ""
+  password: ""
+
+automation:
+  default_download_limit: 100
+  max_download_limit: 500
+  browser_channel: msedge
+  headless: false

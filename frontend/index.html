@@ -61,8 +61,54 @@
         <div class="section-shell">
           <div class="section-title">
             <div>
+              <h2>自动检索下载</h2>
+              <p>使用本机保存的 PatentHub 账号登录、搜索并下载 xlsx；遇到验证码会暂停等待你手动处理。</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button id="savePatentHubBtn" class="secondary-button" type="button">保存账号</button>
+              <button id="startAutomationBtn" class="primary-button" type="button">开始自动检索</button>
+            </div>
+          </div>
+          <div class="grid gap-4 md:grid-cols-4">
+            <label class="space-y-2">
+              <span class="label">PatentHub 账号</span>
+              <input id="patenthubUsernameInput" class="field" placeholder="手机号/账号" />
+            </label>
+            <label class="space-y-2">
+              <span class="label">PatentHub 密码</span>
+              <input id="patenthubPasswordInput" class="field" type="password" placeholder="留空则保留已保存密码" />
+            </label>
+            <label class="space-y-2">
+              <span class="label">本次最多下载</span>
+              <input id="downloadLimitInput" class="field" type="number" min="1" max="500" value="100" />
+            </label>
+            <div class="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              <div class="font-semibold text-slate-800">账号状态</div>
+              <div id="patenthubAccountStatus" class="mt-1">未读取</div>
+            </div>
+          </div>
+          <div class="mt-4 space-y-2">
+            <div class="flex items-center justify-between gap-3">
+              <span class="label">检索式 / 关键词</span>
+              <button id="fillSearchQueryBtn" class="secondary-button compact-button" type="button">填入推荐检索式</button>
+            </div>
+            <textarea id="autoSearchQueryInput" class="field min-h-20" placeholder="可从需求拆解结果自动填入，也可以手动输入 PatentHub 检索式。"></textarea>
+          </div>
+          <div class="mt-4 flex flex-wrap gap-2">
+            <button id="continueAutomationBtn" class="secondary-button hidden" type="button">我已完成验证，继续</button>
+            <button id="cancelAutomationBtn" class="secondary-button hidden" type="button">取消自动任务</button>
+          </div>
+          <div class="mt-4">
+            <div class="progress-track"><div id="automationProgressBar" class="progress-bar"></div></div>
+            <div id="automationStatus" class="status-line"></div>
+          </div>
+        </div>
+
+        <div class="section-shell">
+          <div class="section-title">
+            <div>
               <h2>上传 PatentHub xlsx</h2>
-              <p>读取第一个 sheet，支持切换 sheet、预览前 10 行，并自动映射字段。</p>
+              <p>仍可手动上传 PatentHub 导出的 xlsx，读取第一个 sheet、预览前 10 行并自动映射字段。</p>
             </div>
             <button id="uploadBtn" class="primary-button">上传并预览</button>
           </div>
@@ -222,12 +268,12 @@
           <ol>
             <li>在 AI 设置中填写兼容 OpenAI 的 Base URL、API Key 和模型名称，保存并测试连接。</li>
             <li>在需求拆解中输入专利方向，生成关键词和推荐检索式。</li>
-            <li>到 PatentHub 检索并导出 xlsx 文件。</li>
-            <li>回到上传分析页上传 xlsx，检查字段映射是否正确。</li>
+            <li>可在上传分析页使用自动检索下载；遇到验证码时在 Edge 中手动完成，再点击继续。</li>
+            <li>也可以保留原流程：到 PatentHub 手动检索并导出 xlsx，然后上传分析。</li>
             <li>设置 AI 总结数量和重点申请人，点击开始分析。</li>
             <li>下载生成的 Excel，查看按法律状态拆分的多个 sheet。</li>
           </ol>
-          <p>第一版不会自动登录 PatentHub，也不会绕过验证码或网站权限。相关模块已预留给后续安全自动化版本。</p>
+          <p>自动化只使用正常网页登录和下载，不绕过验证码、不破解登录、不绕过网站权限。若页面结构变化导致无法安全限制下载数量，系统会停止自动下载并提示改用手动上传。</p>
         </div>
       </section>
     </main>
