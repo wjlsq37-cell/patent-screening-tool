@@ -1,0 +1,30 @@
+standard_fields:
+  专利名称:
+    aliases: [专利名称, 标题, 中文标题, 发明名称, 名称, patent title, title]
+  申请号:
+    aliases: [申请号, 申请号码, 专利申请号, application number, application no]
+  公开号:
+    aliases: [公开号, 公开(公告)号, 公开公告号, 公告号, 公开 publication number, publication number]
+  申请日:
+    aliases: [申请日, 申请日期, filing date, application date]
+  公开日:
+    aliases: [公开日, 公开(公告)日, 公告日, 公开日期, publication date]
+  授权日:
+    aliases: [授权日, 授权公告日, grant date]
+  申请人:
+    aliases: [申请人, 第一申请人, 专利权人, 权利人, applicant, assignee]
+  发明人:
+    aliases: [发明人, 设计人, inventor]
+  摘要:
+    aliases: [摘要, 中文摘要, abstract]
+  权利要求:
+    aliases: [权利要求, 权利要求书, 权利要求1, 首项权利要求, claims, claim 1]
+  法律状态:
+    aliases: [法律状态, 当前法律状态, 法律事件, legal status, status]
+  专利类型:
+    aliases: [专利类型, 类型, 申请类型, patent type]
+  IPC 分类号:
+    aliases: [IPC 分类号, IPC分类号, IPC, IPC号, 分类号, 国际专利分类号]
+  详情链接:
+    aliases: [详情链接, 链接, URL, 专利链接, patent link, detail url]
+

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PatentHub AI 专利分析操作台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body class="bg-slate-50 text-slate-900">
+    <header class="border-b border-slate-200 bg-white">
+      <div class="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8">
+        <div class="flex flex-col justify-between gap-3 md:flex-row md:items-end">
+          <div>
+            <p class="text-sm font-medium text-cyan-700">PatentHub AI Assistant</p>
+            <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">专利分析操作台</h1>
+          </div>
+          <div id="globalStatus" class="min-h-6 text-sm text-slate-500"></div>
+        </div>
+        <nav class="flex flex-wrap gap-2" aria-label="主导航">
+          <button class="tab-button active" data-tab="keywords">需求拆解</button>
+          <button class="tab-button" data-tab="analysis">上传分析</button>
+          <button class="tab-button" data-tab="settings">AI 设置</button>
+          <button class="tab-button" data-tab="history">历史记录</button>
+          <button class="tab-button" data-tab="help">使用说明</button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      <section id="tab-keywords" class="tab-panel space-y-5">
+        <div class="section-shell">
+          <div class="section-title">
+            <div>
+              <h2>一句话需求拆解</h2>
+              <p>输入专利方向，生成可复制到 PatentHub 的关键词和检索式。</p>
+            </div>
+            <button id="extractKeywordsBtn" class="primary-button">生成关键词</button>
+          </div>
+          <textarea
+            id="requirementInput"
+            class="field min-h-36"
+            placeholder="例如：查找无乙醇双层扩香香氛相关专利，重点关注双层液体、挥发控制、香精稳定性、无乙醇体系，优先分析中国有效专利。"
+          ></textarea>
+          <div id="keywordStatus" class="status-line"></div>
+        </div>
+
+        <div class="section-shell">
+          <div class="section-title">
+            <div>
+              <h2>关键词结果</h2>
+              <p>结果会保留在本页，并自动用于后续评分。</p>
+            </div>
+            <button id="copyKeywordsBtn" class="secondary-button">一键复制</button>
+          </div>
+          <div id="keywordResult" class="keyword-grid empty-state">尚未生成关键词。</div>
+        </div>
+      </section>
+
+      <section id="tab-analysis" class="tab-panel hidden space-y-5">
+        <div class="section-shell">
+          <div class="section-title">
+            <div>
+              <h2>上传 PatentHub xlsx</h2>
+              <p>读取第一个 sheet，支持切换 sheet、预览前 10 行，并自动映射字段。</p>
+            </div>
+            <button id="uploadBtn" class="primary-button">上传并预览</button>
+          </div>
+          <input id="fileInput" type="file" accept=".xlsx" class="field bg-white" />
+          <div id="uploadStatus" class="status-line"></div>
+        </div>
+
+        <div id="previewSection" class="section-shell hidden">
+          <div class="section-title">
+            <div>
+              <h2>数据预览与字段映射</h2>
+              <p id="previewMeta">尚未读取文件。</p>
+            </div>
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label class="flex items-center gap-2 text-sm text-slate-600">
+                Sheet
+                <select id="sheetSelect" class="select-field min-w-44"></select>
+              </label>
+              <button id="togglePreviewBtn" class="secondary-button" type="button">展开预览与映射</button>
+            </div>
+          </div>
+          <div id="previewContent" class="collapsible-content hidden">
+            <div class="overflow-x-auto rounded-md border border-slate-200 bg-white">
+              <table id="previewTable" class="data-table"></table>
+            </div>
+            <div class="mt-4">
+              <h3 class="mb-3 text-sm font-semibold text-slate-800">字段映射</h3>
+              <div id="fieldMappingGrid" class="mapping-grid"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-shell">
+          <div class="section-title">
+            <div>
+              <h2>分析设置</h2>
+              <p>最多只对前 N 篇调用 AI 总结，其他专利仍会完成本地评分和导出。</p>
+            </div>
+            <button id="analyzeBtn" class="primary-button">开始分析</button>
+          </div>
+          <div class="grid gap-4 md:grid-cols-3">
+            <label class="space-y-2">
+              <span class="label">AI 总结前 N 篇</span>
+              <input id="maxSummaryInput" class="field" type="number" min="0" max="200" value="10" />
+            </label>
+            <label class="space-y-2 md:col-span-2">
+              <span class="label">重点申请人（每行一个，可选）</span>
+              <textarea id="importantApplicantsInput" class="field min-h-20" placeholder="例如：欧莱雅&#10;宝洁"></textarea>
+            </label>
+          </div>
+          <div class="mt-4">
+            <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+            <div id="analysisStatus" class="status-line"></div>
+          </div>
+          <div id="downloadArea" class="hidden rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+            <div class="font-semibold">分析完成</div>
+            <a id="downloadLink" class="mt-2 inline-flex font-semibold text-emerald-800 underline" href="#">下载整合后的 Excel</a>
+          </div>
+        </div>
+
+        <div id="topRecordsSection" class="section-shell hidden">
+          <div class="section-title">
+            <div>
+              <h2>前 10 条结果预览</h2>
+              <p>完整结果请下载 Excel 查看。</p>
+            </div>
+          </div>
+          <div class="overflow-x-auto rounded-md border border-slate-200 bg-white">
+            <table id="topRecordsTable" class="data-table"></table>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-settings" class="tab-panel hidden space-y-5">
+        <div class="section-shell">
+          <div class="section-title">
+            <div>
+              <h2>AI 基本设置</h2>
+              <p>支持 OpenAI-compatible API。API Key 仅保存在本机配置文件中。</p>
+            </div>
+            <div class="flex gap-2">
+              <button id="testSettingsBtn" class="secondary-button">测试连接</button>
+              <button id="saveSettingsBtn" class="primary-button">保存设置</button>
+            </div>
+          </div>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="space-y-2">
+              <span class="label-with-help">
+                <span class="label">Base URL</span>
+                <span class="help-tip" tabindex="0" data-tooltip="兼容 OpenAI 的接口地址。填写服务根地址即可，系统会自动拼接 /v1/chat/completions。">?</span>
+              </span>
+              <input id="baseUrlInput" class="field" placeholder="https://api.openai.com" />
+            </label>
+            <label class="space-y-2">
+              <span class="label-with-help">
+                <span class="label">模型名称</span>
+                <span class="help-tip" tabindex="0" data-tooltip="服务商提供的模型 ID，例如 gpt-4o-mini、deepseek-chat 或本地模型名称。">?</span>
+              </span>
+              <input id="modelInput" class="field" placeholder="gpt-4o-mini" />
+            </label>
+            <label class="space-y-2">
+              <span class="label-with-help">
+                <span class="label">API Key</span>
+                <span class="help-tip" tabindex="0" data-tooltip="模型服务密钥，只保存在本机 config.yaml 中。留空保存时会保留原密钥。">?</span>
+              </span>
+              <input id="apiKeyInput" class="field" type="password" placeholder="留空则保留已保存密钥" />
+            </label>
+            <label class="space-y-2">
+              <span class="label-with-help">
+                <span class="label">API 类型</span>
+                <span class="help-tip" tabindex="0" data-tooltip="当前第一版支持 OpenAI-compatible，也就是常见的 /v1/chat/completions 协议。">?</span>
+              </span>
+              <input id="apiTypeInput" class="field" value="OpenAI-compatible" />
+            </label>
+            <label class="space-y-2">
+              <span class="label-with-help">
+                <span class="label">temperature</span>
+                <span class="help-tip" tabindex="0" data-tooltip="控制输出随机性。0 更稳定，0.2-0.5 适合专利分析，值越高越发散。">?</span>
+              </span>
+              <input id="temperatureInput" class="field" type="number" min="0" max="2" step="0.1" />
+            </label>
+            <label class="space-y-2">
+              <span class="label-with-help">
+                <span class="label">max_tokens</span>
+                <span class="help-tip" tabindex="0" data-tooltip="限制单次 AI 回复长度。关键词拆解和单篇摘要通常 1000-2000 足够。">?</span>
+              </span>
+              <input id="maxTokensInput" class="field" type="number" min="1" max="32000" />
+            </label>
+          </div>
+          <label class="mt-4 flex items-center gap-2 text-sm text-slate-700">
+            <input id="streamInput" type="checkbox" class="h-4 w-4 rounded border-slate-300" />
+            启用流式输出配置（第一版接口仍以非流式返回）
+            <span class="help-tip" tabindex="0" data-tooltip="流式输出会边生成边显示。第一版先保存该配置，实际接口仍一次性返回结果。">?</span>
+          </label>
+          <div id="settingsStatus" class="status-line"></div>
+        </div>
+      </section>
+
+      <section id="tab-history" class="tab-panel hidden space-y-5">
+        <div class="section-shell">
+          <div class="section-title">
+            <div>
+              <h2>历史记录</h2>
+              <p>最近 100 次分析会保存在本地，可重新下载或删除。</p>
+            </div>
+            <button id="refreshHistoryBtn" class="secondary-button">刷新</button>
+          </div>
+          <div class="overflow-x-auto rounded-md border border-slate-200 bg-white">
+            <table id="historyTable" class="data-table"></table>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-help" class="tab-panel hidden space-y-5">
+        <div class="section-shell prose max-w-none prose-slate">
+          <h2>使用说明</h2>
+          <ol>
+            <li>在 AI 设置中填写兼容 OpenAI 的 Base URL、API Key 和模型名称，保存并测试连接。</li>
+            <li>在需求拆解中输入专利方向，生成关键词和推荐检索式。</li>
+            <li>到 PatentHub 检索并导出 xlsx 文件。</li>
+            <li>回到上传分析页上传 xlsx，检查字段映射是否正确。</li>
+            <li>设置 AI 总结数量和重点申请人，点击开始分析。</li>
+            <li>下载生成的 Excel，查看按法律状态拆分的多个 sheet。</li>
+          </ol>
+          <p>第一版不会自动登录 PatentHub，也不会绕过验证码或网站权限。相关模块已预留给后续安全自动化版本。</p>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

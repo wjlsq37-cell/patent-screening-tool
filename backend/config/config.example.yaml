@@ -1,0 +1,39 @@
+ai:
+  api_type: OpenAI-compatible
+  base_url: https://api.openai.com
+  api_key: ""
+  model: gpt-4o-mini
+  temperature: 0.2
+  max_tokens: 1800
+  stream: false
+  timeout_seconds: 60
+
+analysis:
+  weights:
+    relevance: 0.50
+    legal_status: 0.20
+    applicant: 0.15
+    time: 0.10
+    completeness: 0.05
+  high_relevance_threshold: 75
+  max_ai_summary: 10
+  important_applicants: []
+  company_keywords:
+    - 公司
+    - 集团
+    - 股份
+    - 有限
+    - Corporation
+    - Inc
+    - Ltd
+  research_keywords:
+    - 大学
+    - 学院
+    - 研究院
+    - 科学院
+    - 研究所
+
+export:
+  filename_prefix: PatentHub_AI分析
+  timezone: Asia/Shanghai
+

@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Local secrets and machine-specific settings
+.env
+*.env
+backend/config/config.yaml
+
+# Runtime data
+backend/data/history.json
+backend/data/server.*.log
+backend/data/uploads/*
+backend/data/outputs/*
+backend/data/cache/*
+!backend/data/uploads/.gitkeep
+!backend/data/outputs/.gitkeep
+!backend/data/cache/.gitkeep
+
+# Packages and local artifacts
+dist/
+*.zip
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
