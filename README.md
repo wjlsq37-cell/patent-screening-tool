@@ -197,17 +197,63 @@ backend/core/patenthub_downloader.py
 
 ## 打包发给其他电脑
 
-当前项目提供打包脚本：
+当前项目提供两类打包方式。
+
+### 免安装便携包
+
+推荐给没有 Python 的电脑使用。打包机需要能联网，并已安装 Python；目标电脑不需要安装 Python。
+
+双击：
+
+```text
+build_portable_windows.bat
+```
+
+或手动执行：
 
 ```powershell
 cd E:\project\Patent_screening_tool\patenthub-ai-assistant
-python scripts\build_package.py
+python scripts\build_package.py --mode portable
 ```
 
 打包结果会生成在：
 
 ```text
 dist/
+```
+
+文件名类似：
+
+```text
+PatentHub_AI_Assistant_portable_win_amd64_py运行时版本_YYYYMMDD_HHMMSS.zip
+```
+
+便携包内包含：
+
+- Windows x64 便携 Python 运行环境
+- 已安装好的后端依赖
+- 项目代码和前端页面
+- 一键启动脚本 `start_windows.bat`
+
+别人拿到便携包后：
+
+1. 解压。
+2. 双击 `start_windows.bat`。
+3. 浏览器打开 `http://127.0.0.1:8000`。
+4. 在“AI 设置”里填写自己的 API Key。
+
+### 源码包
+
+如果目标电脑已经安装 Python，也可以生成更小的源码包：
+
+```powershell
+python scripts\build_package.py --mode source
+```
+
+同时生成便携包和源码包：
+
+```powershell
+python scripts\build_package.py --mode all
 ```
 
 压缩包会自动排除：
@@ -220,7 +266,7 @@ dist/
 - 服务日志
 - `.venv` 虚拟环境
 
-别人拿到压缩包后：
+源码包使用方式：
 
 1. 解压。
 2. 双击 `install_windows.bat`。
