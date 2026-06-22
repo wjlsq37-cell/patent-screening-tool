@@ -81,14 +81,12 @@ class PatentHubAutomation:
         if self._is_login_url(page.url):
             raise PatentHubAutomationError("仍停留在登录页，请确认账号密码或手动完成验证后重试。")
 
-        selected = await self._select_first_results(page, download_limit)
+        selected = await self._select_first_results(page, 1)
         if selected <= 0:
-            raise PatentHubAutomationError(
-                "未能识别搜索结果选择框。为避免超量下载，已停止自动导出；请改用手动下载 xlsx 后上传。"
-            )
+            await self._notify(status_callback, "downloading", 62, "未识别到结果选择框，将尝试使用下载著录项的范围下载。")
 
-        await self._notify(status_callback, "downloading", 70, f"已选择前 {selected} 条结果，正在触发 xlsx 下载...")
-        download_path = await self._trigger_xlsx_download(page, status_callback)
+        await self._notify(status_callback, "downloading", 70, f"正在打开下载著录项，并设置下载范围 1-{download_limit}...")
+        download_path = await self._trigger_xlsx_download(page, download_limit, status_callback)
         await self._notify(status_callback, "downloading", 85, "xlsx 已下载，正在交给分析流程...")
         return PatentHubDownloadResult(download_path, download_path.name)
 
@@ -214,38 +212,266 @@ class PatentHubAutomation:
         except Exception:
             return False
 
-    async def _trigger_xlsx_download(self, page, status_callback: StatusCallback) -> Path:
-        patterns = [
-            re.compile(r"(导出|下载).*(Excel|excel|xlsx|XLSX|著录项)?"),
-            re.compile(r"(Excel|excel|xlsx|XLSX)"),
-            re.compile(r"(导出|下载)"),
+    async def _trigger_xlsx_download(self, page, download_limit: int, status_callback: StatusCallback) -> Path:
+        await self._open_bibliography_download_dialog(page)
+        await self._notify(status_callback, "downloading", 74, "已打开下载著录项，正在选择范围、xls 格式和 wjl01 模板...")
+        await self._configure_bibliography_download_dialog(page, download_limit)
+
+        can_click = await self._has_dialog_download_button(page)
+        if not can_click:
+            raise PatentHubAutomationError("未能在“下载著录项”弹窗内找到绿色“下载”按钮。")
+
+        async with page.expect_download(timeout=120000) as download_info:
+            clicked = await self._click_dialog_download_button(page)
+            if not clicked:
+                raise PatentHubAutomationError("未能点击“下载著录项”弹窗内的下载按钮。")
+
+        download = await download_info.value
+        suggested = download.suggested_filename or "patenthub_download.xlsx"
+        if not suggested.lower().endswith(".xlsx"):
+            raise PatentHubAutomationError(f"下载文件不是 xlsx：{suggested}")
+
+        safe_name = re.sub(r'[<>:"/\\|?*]+', "_", suggested)
+        target = UPLOAD_DIR / "_patenthub_downloads" / f"patenthub_auto_{uuid4().hex[:8]}_{safe_name}"
+        await download.save_as(str(target))
+        return target
+
+    async def _open_bibliography_download_dialog(self, page) -> None:
+        if await self._has_bibliography_download_dialog(page):
+            return
+
+        selectors = [
+            "[title*='下载著录项']",
+            "[aria-label*='下载著录项']",
+            "[data-original-title*='下载著录项']",
+            "[data-bs-title*='下载著录项']",
+            "[data-title*='下载著录项']",
         ]
-        for _ in range(2):
-            for pattern in patterns:
-                locators = page.locator("button, a, [role='button'], .btn, span, div").filter(has_text=pattern)
-                count = min(await locators.count(), 20)
-                for index in range(count):
-                    locator = locators.nth(index)
-                    try:
-                        if not await locator.is_visible(timeout=1000):
-                            continue
-                        async with page.expect_download(timeout=15000) as download_info:
-                            await locator.click(timeout=3000)
-                        download = await download_info.value
-                        suggested = download.suggested_filename or "patenthub_download.xlsx"
-                        if not suggested.lower().endswith(".xlsx"):
-                            raise PatentHubAutomationError(f"下载文件不是 xlsx：{suggested}")
-                        safe_name = re.sub(r'[<>:"/\\|?*]+', "_", suggested)
-                        target = UPLOAD_DIR / "_patenthub_downloads" / f"patenthub_auto_{uuid4().hex[:8]}_{safe_name}"
-                        await download.save_as(str(target))
-                        return target
-                    except PatentHubAutomationError:
-                        raise
-                    except Exception:
+        for selector in selectors:
+            locators = page.locator(selector)
+            count = min(await locators.count(), 10)
+            for index in range(count):
+                locator = locators.nth(index)
+                try:
+                    if not await locator.is_visible(timeout=1000):
                         continue
-            await self._notify(status_callback, "downloading", 76, "未直接触发下载，正在尝试展开导出菜单...")
-            await page.wait_for_timeout(2000)
-        raise PatentHubAutomationError("未能识别 xlsx 导出按钮。请手动在 PatentHub 下载后上传。")
+                    await locator.click(timeout=5000)
+                    if await self._wait_for_bibliography_download_dialog(page):
+                        return
+                except Exception:
+                    continue
+
+        clicked = await page.evaluate(
+            """() => {
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden'
+                        && style.display !== 'none'
+                        && rect.width > 0
+                        && rect.height > 0;
+                };
+                const labels = ['下载著录项'];
+                const elements = Array.from(document.querySelectorAll('button,a,[role="button"],i,span,div'));
+                for (const el of elements) {
+                    if (!visible(el)) continue;
+                    const text = [
+                        el.innerText || '',
+                        el.getAttribute('title') || '',
+                        el.getAttribute('aria-label') || '',
+                        el.getAttribute('data-original-title') || '',
+                        el.getAttribute('data-bs-title') || '',
+                        el.getAttribute('data-title') || ''
+                    ].join(' ');
+                    if (labels.some((label) => text.includes(label))) {
+                        el.scrollIntoView({ block: 'center', inline: 'center' });
+                        el.click();
+                        return true;
+                    }
+                }
+                return false;
+            }"""
+        )
+        if clicked and await self._wait_for_bibliography_download_dialog(page):
+            return
+
+        raise PatentHubAutomationError("未能找到“下载著录项”按钮，请确认 PatentHub 页面已进入检索结果页。")
+
+    async def _wait_for_bibliography_download_dialog(self, page) -> bool:
+        for _ in range(20):
+            if await self._has_bibliography_download_dialog(page):
+                return True
+            await page.wait_for_timeout(500)
+        return False
+
+    async def _has_bibliography_download_dialog(self, page) -> bool:
+        return bool(
+            await page.evaluate(
+                """() => {
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.visibility !== 'hidden'
+                            && style.display !== 'none'
+                            && rect.width > 0
+                            && rect.height > 0;
+                    };
+                    const dialogs = Array.from(document.querySelectorAll('div,section,article,[role="dialog"]'))
+                        .filter(visible)
+                        .filter((el) => {
+                            const text = el.innerText || '';
+                            return text.includes('下载著录项') && text.includes('导出范围');
+                        });
+                    return dialogs.length > 0;
+                }"""
+            )
+        )
+
+    async def _configure_bibliography_download_dialog(self, page, download_limit: int) -> None:
+        result = await page.evaluate(
+            """({ limit, template }) => {
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden'
+                        && style.display !== 'none'
+                        && rect.width > 0
+                        && rect.height > 0;
+                };
+                const visibleElements = (root, selector) => Array.from(root.querySelectorAll(selector)).filter(visible);
+                const setValue = (el, value) => {
+                    const proto = Object.getPrototypeOf(el);
+                    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+                    if (descriptor && descriptor.set) {
+                        descriptor.set.call(el, value);
+                    } else {
+                        el.value = value;
+                    }
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                };
+                const clickNearestInput = (root, text) => {
+                    const label = visibleElements(root, 'label,span,div,p').find((el) => (el.innerText || '').trim().includes(text));
+                    if (!label) return false;
+                    const container = label.closest('label,li,tr,.row,.form-group,div') || label.parentElement || root;
+                    const radio = visibleElements(container, 'input[type="radio"]').find((el) => !el.disabled);
+                    if (radio) {
+                        radio.click();
+                        return true;
+                    }
+                    label.click();
+                    return true;
+                };
+                const dialogs = visibleElements(document, 'div,section,article,[role="dialog"]')
+                    .filter((el) => {
+                        const text = el.innerText || '';
+                        return text.includes('下载著录项') && text.includes('导出范围');
+                    })
+                    .sort((a, b) => {
+                        const ar = a.getBoundingClientRect();
+                        const br = b.getBoundingClientRect();
+                        return (ar.width * ar.height) - (br.width * br.height);
+                    });
+                const dialog = dialogs[0];
+                if (!dialog) return { ok: false, error: '未找到下载著录项弹窗。' };
+
+                clickNearestInput(dialog, '范围从');
+
+                const rangeInputs = visibleElements(dialog, 'input')
+                    .filter((el) => !el.disabled && !['radio', 'checkbox', 'hidden', 'file'].includes((el.type || '').toLowerCase()));
+                if (rangeInputs.length < 2) return { ok: false, error: '未找到下载范围输入框。' };
+                setValue(rangeInputs[0], '1');
+                setValue(rangeInputs[1], String(limit));
+
+                const xlsCandidate = visibleElements(dialog, 'button,a,span,div,i,label')
+                    .filter((el) => {
+                        const text = [
+                            el.innerText || '',
+                            el.getAttribute('title') || '',
+                            el.getAttribute('aria-label') || '',
+                            el.getAttribute('class') || ''
+                        ].join(' ');
+                        return /\\bXLS\\b|\\bXLSX\\b|xls|xlsx/i.test(text);
+                    })
+                    .sort((a, b) => {
+                        const ar = a.getBoundingClientRect();
+                        const br = b.getBoundingClientRect();
+                        return (ar.width * ar.height) - (br.width * br.height);
+                    })[0];
+                if (xlsCandidate) {
+                    xlsCandidate.scrollIntoView({ block: 'center', inline: 'center' });
+                    xlsCandidate.click();
+                }
+
+                const selects = visibleElements(dialog, 'select');
+                for (const select of selects) {
+                    const option = Array.from(select.options || []).find((item) => item.text.trim() === template || item.value === template);
+                    if (option) {
+                        select.value = option.value;
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                        break;
+                    }
+                }
+
+                const text = dialog.innerText || '';
+                if (!text.includes(template)) return { ok: false, error: `未找到 ${template} 下载模板。` };
+
+                const pdfSwitches = visibleElements(dialog, 'input[type="checkbox"]');
+                for (const item of pdfSwitches) {
+                    const nearby = (item.closest('label,li,tr,.row,.form-group,div') || dialog).innerText || '';
+                    if (nearby.includes('同时下载PDF') && item.checked) item.click();
+                }
+
+                return { ok: true };
+            }""",
+            {"limit": download_limit, "template": "wjl01"},
+        )
+        if not result.get("ok"):
+            raise PatentHubAutomationError(result.get("error") or "下载著录项弹窗配置失败。")
+
+    async def _has_dialog_download_button(self, page) -> bool:
+        return bool(await page.evaluate(self._dialog_download_button_script("check")))
+
+    async def _click_dialog_download_button(self, page) -> bool:
+        return bool(await page.evaluate(self._dialog_download_button_script("click")))
+
+    @staticmethod
+    def _dialog_download_button_script(mode: str) -> str:
+        return f"""() => {{
+            const visible = (el) => {{
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.visibility !== 'hidden'
+                    && style.display !== 'none'
+                    && rect.width > 0
+                    && rect.height > 0;
+            }};
+            const elements = (root, selector) => Array.from(root.querySelectorAll(selector)).filter(visible);
+            const dialogs = elements(document, 'div,section,article,[role="dialog"]')
+                .filter((el) => {{
+                    const text = el.innerText || '';
+                    return text.includes('下载著录项') && text.includes('导出范围');
+                }})
+                .sort((a, b) => {{
+                    const ar = a.getBoundingClientRect();
+                    const br = b.getBoundingClientRect();
+                    return (ar.width * ar.height) - (br.width * br.height);
+                }});
+            const dialog = dialogs[0];
+            if (!dialog) return false;
+            const candidates = elements(dialog, 'button,a,[role="button"],input[type="button"],input[type="submit"]')
+                .filter((el) => {{
+                    const text = (el.innerText || el.value || '').trim();
+                    return text === '下载';
+                }});
+            const button = candidates[0];
+            if (!button) return false;
+            if ('{mode}' === 'click') {{
+                button.scrollIntoView({{ block: 'center', inline: 'center' }});
+                button.click();
+            }}
+            return true;
+        }}"""
 
     @staticmethod
     def _is_login_url(url: str) -> bool:
