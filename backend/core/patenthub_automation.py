@@ -221,10 +221,15 @@ class PatentHubAutomation:
     async def _trigger_xlsx_download(self, page, download_limit: int, status_callback: StatusCallback) -> Path:
         await self._open_bibliography_download_dialog(page)
         await self._notify(status_callback, "downloading", 74, "已打开下载著录项，正在选择范围、xls 格式和 wjl01 模板...")
-        await self._configure_bibliography_download_dialog(page, download_limit)
+        try:
+            await self._configure_bibliography_download_dialog(page, download_limit)
+        except PatentHubAutomationError:
+            self._leave_browser_open = True
+            raise
 
         can_click = await self._has_dialog_download_button(page)
         if not can_click:
+            self._leave_browser_open = True
             raise PatentHubAutomationError("未能在“下载著录项”弹窗内找到绿色“下载”按钮。")
 
         await self._notify(status_callback, "downloading", 78, "已点击下载，正在等待 PatentHub 生成并开始下载文件...")
@@ -582,7 +587,7 @@ class PatentHubAutomation:
 
     async def _configure_bibliography_download_dialog(self, page, download_limit: int) -> None:
         result = await page.evaluate(
-            """({ limit, template }) => {
+            """async ({ limit, template }) => {
                 const visible = (el) => {
                     const style = window.getComputedStyle(el);
                     const rect = el.getBoundingClientRect();
@@ -615,6 +620,8 @@ class PatentHubAutomation:
                     label.click();
                     return true;
                 };
+                const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                const normalizedText = (el) => (el.innerText || el.value || '').replace(/\\s+/g, '').trim();
                 const dialogs = visibleElements(document, 'div,section,article,[role="dialog"]')
                     .filter((el) => {
                         const text = el.innerText || '';
@@ -656,18 +663,81 @@ class PatentHubAutomation:
                     xlsCandidate.click();
                 }
 
+                let templateSelected = false;
                 const selects = visibleElements(dialog, 'select');
                 for (const select of selects) {
                     const option = Array.from(select.options || []).find((item) => item.text.trim() === template || item.value === template);
                     if (option) {
                         select.value = option.value;
                         select.dispatchEvent(new Event('change', { bubbles: true }));
+                        templateSelected = true;
                         break;
                     }
                 }
 
-                const text = dialog.innerText || '';
-                if (!text.includes(template)) return { ok: false, error: `未找到 ${template} 下载模板。` };
+                if (!templateSelected) {
+                    const label = visibleElements(dialog, 'label,span,div,p')
+                        .find((el) => normalizedText(el).includes('请选择下载内容'));
+                    const labelRect = label ? label.getBoundingClientRect() : null;
+                    const triggers = visibleElements(dialog, 'button,a,[role="button"],input,span,div')
+                        .filter((el) => {
+                            if (['radio', 'checkbox', 'hidden', 'file'].includes((el.type || '').toLowerCase())) return false;
+                            const text = normalizedText(el);
+                            if (text.includes('新增自定义模板') || text.includes('删除模板') || text.includes('导出字段')) return false;
+                            const rect = el.getBoundingClientRect();
+                            if (rect.width < 60 || rect.width > 360 || rect.height < 20 || rect.height > 70) return false;
+                            if (labelRect) {
+                                const sameRow = Math.abs((rect.top + rect.bottom) / 2 - (labelRect.top + labelRect.bottom) / 2) < 45;
+                                const rightOfLabel = rect.left > labelRect.left;
+                                return sameRow && rightOfLabel;
+                            }
+                            return ['基本字段', '常用字段', template].some((item) => text.includes(item));
+                        })
+                        .sort((a, b) => {
+                            const ar = a.getBoundingClientRect();
+                            const br = b.getBoundingClientRect();
+                            const at = normalizedText(a);
+                            const bt = normalizedText(b);
+                            const aScore = (at.includes(template) ? 1000 : 0)
+                                + (at.includes('基本字段') || at.includes('常用字段') ? 500 : 0)
+                                - Math.abs(ar.width - 200);
+                            const bScore = (bt.includes(template) ? 1000 : 0)
+                                + (bt.includes('基本字段') || bt.includes('常用字段') ? 500 : 0)
+                                - Math.abs(br.width - 200);
+                            return bScore - aScore;
+                        });
+                    const trigger = triggers[0];
+                    if (trigger) {
+                        trigger.scrollIntoView({ block: 'center', inline: 'center' });
+                        trigger.click();
+                        await delay(500);
+                    }
+
+                    const options = visibleElements(document, 'li,div,span,a,button,[role="option"],[role="menuitem"]')
+                        .filter((el) => {
+                            if (dialog.contains(el) && el.tagName.toLowerCase() === 'textarea') return false;
+                            return normalizedText(el) === template;
+                        })
+                        .sort((a, b) => {
+                            const ar = a.getBoundingClientRect();
+                            const br = b.getBoundingClientRect();
+                            return (ar.width * ar.height) - (br.width * br.height);
+                        });
+                    const option = options[0];
+                    if (option) {
+                        option.scrollIntoView({ block: 'center', inline: 'center' });
+                        option.click();
+                        await delay(500);
+                        templateSelected = true;
+                    }
+                }
+
+                const selectedText = (dialog.innerText || '').replace(/\\s+/g, '');
+                const selectedElement = visibleElements(dialog, 'button,a,[role="button"],input,span,div')
+                    .some((el) => normalizedText(el) === template);
+                if (!templateSelected && !selectedText.includes(template) && !selectedElement) {
+                    return { ok: false, error: `未能选择 ${template} 下载模板，请确认已在 PatentHub 中创建该模板。` };
+                }
 
                 const pdfSwitches = visibleElements(dialog, 'input[type="checkbox"]');
                 for (const item of pdfSwitches) {
