@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -33,8 +34,13 @@ class PatentHubAutomation:
         self._browser = None
         self._context = None
         self._page = None
+        self._download_button_clicked = False
+        self._download_finished = False
+        self._leave_browser_open = False
 
     async def close(self) -> None:
+        if self._leave_browser_open:
+            return
         for obj in (self._context, self._browser):
             if obj:
                 try:
@@ -221,20 +227,66 @@ class PatentHubAutomation:
         if not can_click:
             raise PatentHubAutomationError("未能在“下载著录项”弹窗内找到绿色“下载”按钮。")
 
-        async with page.expect_download(timeout=120000) as download_info:
-            clicked = await self._click_dialog_download_button(page)
-            if not clicked:
-                raise PatentHubAutomationError("未能点击“下载著录项”弹窗内的下载按钮。")
+        await self._notify(status_callback, "downloading", 78, "已点击下载，正在等待 PatentHub 生成并开始下载文件...")
+        try:
+            async with page.expect_download(timeout=900000) as download_info:
+                self._download_button_clicked = True
+                clicked = await self._click_dialog_download_button(page)
+                if not clicked:
+                    self._download_button_clicked = False
+                    raise PatentHubAutomationError("未能点击“下载著录项”弹窗内的下载按钮。")
+            download = await download_info.value
+        except PatentHubAutomationError:
+            raise
+        except Exception as exc:
+            if self._download_button_clicked and not self._download_finished:
+                self._leave_browser_open = True
+                raise PatentHubAutomationError(
+                    "已点击 PatentHub 下载按钮，但长时间未检测到浏览器下载完成。Edge 窗口已保留，请等待网站生成完成或手动下载后上传。"
+                ) from exc
+            raise
 
-        download = await download_info.value
+        await self._notify(status_callback, "downloading", 82, "浏览器已开始下载，正在保存文件到本地...")
         suggested = download.suggested_filename or "patenthub_download.xlsx"
         if not suggested.lower().endswith(".xlsx"):
             raise PatentHubAutomationError(f"下载文件不是 xlsx：{suggested}")
 
         safe_name = re.sub(r'[<>:"/\\|?*]+', "_", suggested)
         target = UPLOAD_DIR / "_patenthub_downloads" / f"patenthub_auto_{uuid4().hex[:8]}_{safe_name}"
-        await download.save_as(str(target))
+        try:
+            await download.save_as(str(target))
+            await self._wait_for_download_file_ready(target)
+        except Exception as exc:
+            self._leave_browser_open = True
+            raise PatentHubAutomationError(
+                "浏览器下载尚未完整保存到本地。Edge 窗口已保留，请等待下载完成后重试或手动上传下载文件。"
+            ) from exc
+        self._download_finished = True
         return target
+
+    async def _wait_for_download_file_ready(self, path: Path) -> None:
+        last_size = -1
+        stable_checks = 0
+        for _ in range(120):
+            if path.exists():
+                size = path.stat().st_size
+                if size > 0 and size == last_size:
+                    stable_checks += 1
+                else:
+                    stable_checks = 0
+                last_size = size
+                if stable_checks >= 3 and self._is_valid_xlsx(path):
+                    return
+            await asyncio.sleep(1)
+        raise TimeoutError(f"下载文件未稳定保存：{path}")
+
+    @staticmethod
+    def _is_valid_xlsx(path: Path) -> bool:
+        try:
+            with zipfile.ZipFile(path) as archive:
+                return archive.testzip() is None
+        except zipfile.BadZipFile:
+            return False
 
     async def _open_bibliography_download_dialog(self, page) -> None:
         if await self._has_bibliography_download_dialog(page):
