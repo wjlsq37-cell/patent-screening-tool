@@ -241,8 +241,11 @@ class PatentHubAutomation:
             return
         if await self._click_bibliography_menu_item(page):
             return
-        if await self._open_toolbar_download_menu(page) and await self._click_bibliography_menu_item(page):
-            return
+        if await self._open_toolbar_download_menu(page):
+            if await self._has_bibliography_download_dialog(page):
+                return
+            if await self._click_bibliography_menu_item(page):
+                return
 
         selectors = [
             "[title*='下载著录项']",
@@ -346,10 +349,89 @@ class PatentHubAutomation:
                 return true;
             }"""
         )
-        if not clicked:
-            return False
-        await page.wait_for_timeout(800)
-        return True
+        if clicked:
+            await page.wait_for_timeout(800)
+            if await self._has_bibliography_download_dialog(page) or await self._has_bibliography_menu_item(page):
+                return True
+
+        # PatentHub's toolbar download icon is sometimes an unlabeled icon. Try
+        # the compact toolbar icons near the search controls until the menu appears.
+        candidates = await page.evaluate(
+            """() => {
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden'
+                        && style.display !== 'none'
+                        && rect.width >= 8
+                        && rect.height >= 8;
+                };
+                const textOf = (el) => [
+                    el.innerText || '',
+                    el.getAttribute('title') || '',
+                    el.getAttribute('aria-label') || '',
+                    el.getAttribute('data-original-title') || '',
+                    el.getAttribute('data-bs-title') || '',
+                    el.getAttribute('data-title') || '',
+                    el.getAttribute('class') || ''
+                ].join(' ');
+                const rows = Array.from(document.querySelectorAll('button,a,[role="button"],i,span,svg,em'))
+                    .filter(visible)
+                    .map((el) => {
+                        const clickable = el.closest('button,a,[role="button"]') || el;
+                        const rect = clickable.getBoundingClientRect();
+                        const rawText = (clickable.innerText || '').replace(/\\s+/g, '');
+                        const text = textOf(clickable) + ' ' + textOf(el);
+                        return { el, clickable, rect, rawText, text };
+                    })
+                    .filter(({ rect, rawText, text }) => {
+                        if (rect.top < 70 || rect.top > 230) return false;
+                        if (rect.left < 180) return false;
+                        if (rect.width > 130 || rect.height > 70) return false;
+                        if (/PDF全文|著录项|下载著录项/.test(text)) return false;
+                        if (rawText.length > 8 && !/下载|download|export|down/i.test(text)) return false;
+                        return true;
+                    })
+                    .map(({ clickable, rect, rawText, text }) => {
+                        let score = 0;
+                        if (/下载|download|export|download-alt|glyphicon-download|fa-download|icon-download|down/i.test(text)) score += 1000;
+                        if (/icon|glyphicon|fa-|fa\\s|download|down/i.test(text)) score += 120;
+                        if (!rawText) score += 60;
+                        score -= Math.abs(rect.top - 138) * 4;
+                        score -= Math.max(0, rect.width * rect.height - 900) / 30;
+                        return {
+                            x: rect.left + rect.width / 2,
+                            y: rect.top + rect.height / 2,
+                            score,
+                            key: `${Math.round(rect.left)}:${Math.round(rect.top)}:${Math.round(rect.width)}:${Math.round(rect.height)}`,
+                            text: text.slice(0, 120)
+                        };
+                    })
+                    .sort((a, b) => b.score - a.score);
+
+                const seen = new Set();
+                const unique = [];
+                for (const row of rows) {
+                    if (seen.has(row.key)) continue;
+                    seen.add(row.key);
+                    unique.push(row);
+                    if (unique.length >= 24) break;
+                }
+                return unique;
+            }"""
+        )
+
+        for candidate in candidates:
+            try:
+                await page.mouse.click(candidate["x"], candidate["y"])
+                await page.wait_for_timeout(700)
+                if await self._has_bibliography_download_dialog(page) or await self._has_bibliography_menu_item(page):
+                    return True
+                await page.keyboard.press("Escape")
+                await page.wait_for_timeout(200)
+            except Exception:
+                continue
+        return False
 
     async def _click_bibliography_menu_item(self, page) -> bool:
         clicked = await page.evaluate(
@@ -393,6 +475,28 @@ class PatentHubAutomation:
         if not clicked:
             return False
         return await self._wait_for_bibliography_download_dialog(page)
+
+    async def _has_bibliography_menu_item(self, page) -> bool:
+        return bool(
+            await page.evaluate(
+                """() => {
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.visibility !== 'hidden'
+                            && style.display !== 'none'
+                            && rect.width > 0
+                            && rect.height > 0;
+                    };
+                    return Array.from(document.querySelectorAll('button,a,[role="button"],[role="menuitem"],li,span,div'))
+                        .filter(visible)
+                        .some((el) => {
+                            const text = (el.innerText || '').replace(/\\s+/g, '');
+                            return text === '著录项' || text === '著录项PDF全文' || text.includes('著录项');
+                        });
+                }"""
+            )
+        )
 
     async def _wait_for_bibliography_download_dialog(self, page) -> bool:
         for _ in range(20):
