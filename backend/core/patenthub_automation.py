@@ -239,6 +239,10 @@ class PatentHubAutomation:
     async def _open_bibliography_download_dialog(self, page) -> None:
         if await self._has_bibliography_download_dialog(page):
             return
+        if await self._click_bibliography_menu_item(page):
+            return
+        if await self._open_toolbar_download_menu(page) and await self._click_bibliography_menu_item(page):
+            return
 
         selectors = [
             "[title*='下载著录项']",
@@ -295,7 +299,100 @@ class PatentHubAutomation:
         if clicked and await self._wait_for_bibliography_download_dialog(page):
             return
 
-        raise PatentHubAutomationError("未能找到“下载著录项”按钮，请确认 PatentHub 页面已进入检索结果页。")
+        raise PatentHubAutomationError("未能找到工具栏下载菜单中的“著录项”，请确认 PatentHub 页面已进入检索结果页。")
+
+    async def _open_toolbar_download_menu(self, page) -> bool:
+        clicked = await page.evaluate(
+            """() => {
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden'
+                        && style.display !== 'none'
+                        && rect.width > 0
+                        && rect.height > 0;
+                };
+                const textOf = (el) => [
+                    el.innerText || '',
+                    el.getAttribute('title') || '',
+                    el.getAttribute('aria-label') || '',
+                    el.getAttribute('data-original-title') || '',
+                    el.getAttribute('data-bs-title') || '',
+                    el.getAttribute('data-title') || '',
+                    el.getAttribute('class') || ''
+                ].join(' ');
+                const elements = Array.from(document.querySelectorAll('button,a,[role="button"],i,span,div'))
+                    .filter(visible)
+                    .filter((el) => {
+                        const rect = el.getBoundingClientRect();
+                        const text = textOf(el);
+                        if (rect.top > 260) return false;
+                        if (/PDF全文|著录项|下载著录项/.test(text)) return false;
+                        return /下载|download|export|glyphicon-download|fa-download|icon-download|download-alt/i.test(text);
+                    })
+                    .sort((a, b) => {
+                        const ar = a.getBoundingClientRect();
+                        const br = b.getBoundingClientRect();
+                        const ay = Math.abs(ar.top - 135);
+                        const by = Math.abs(br.top - 135);
+                        if (ay !== by) return ay - by;
+                        return (ar.width * ar.height) - (br.width * br.height);
+                    });
+                const target = elements[0];
+                if (!target) return false;
+                const clickable = target.closest('button,a,[role="button"]') || target;
+                clickable.scrollIntoView({ block: 'center', inline: 'center' });
+                clickable.click();
+                return true;
+            }"""
+        )
+        if not clicked:
+            return False
+        await page.wait_for_timeout(800)
+        return True
+
+    async def _click_bibliography_menu_item(self, page) -> bool:
+        clicked = await page.evaluate(
+            """() => {
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden'
+                        && style.display !== 'none'
+                        && rect.width > 0
+                        && rect.height > 0;
+                };
+                const isInsideDownloadDialog = (el) => {
+                    const container = el.closest('div,section,article,[role="dialog"]');
+                    const text = container ? (container.innerText || '') : '';
+                    return text.includes('下载著录项') && text.includes('导出范围');
+                };
+                const elements = Array.from(document.querySelectorAll('button,a,[role="button"],[role="menuitem"],li,span,div'))
+                    .filter(visible)
+                    .filter((el) => {
+                        if (isInsideDownloadDialog(el)) return false;
+                        const text = (el.innerText || '').replace(/\\s+/g, '');
+                        return text === '著录项' || text === '著录项PDF全文' || text.includes('著录项');
+                    })
+                    .sort((a, b) => {
+                        const ar = a.getBoundingClientRect();
+                        const br = b.getBoundingClientRect();
+                        const aText = (a.innerText || '').trim().length;
+                        const bText = (b.innerText || '').trim().length;
+                        if (aText !== bText) return aText - bText;
+                        return (ar.width * ar.height) - (br.width * br.height);
+                    });
+                const target = elements[0];
+                if (!target) return false;
+                const clickable = target.closest('button,a,[role="button"],[role="menuitem"],li') || target;
+                clickable.scrollIntoView({ block: 'center', inline: 'center' });
+                clickable.click();
+                return true;
+            }"""
+        )
+        if not clicked:
+            return False
+        return await self._wait_for_bibliography_download_dialog(page)
 
     async def _wait_for_bibliography_download_dialog(self, page) -> bool:
         for _ in range(20):
